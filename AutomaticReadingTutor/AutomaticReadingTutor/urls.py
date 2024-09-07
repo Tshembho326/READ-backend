@@ -14,6 +14,7 @@ urlpatterns = [
     path('forgot-password/', auth.forgotPassword, name='forgot_password'),
     path('reset-password/<uidb64>/<token>/', auth.resetPassword, name='reset_password'),
     path('change-password/', auth.changePassword, name='change_password'),
+    path('change-user-details/', auth.changeUserDetails, name="change_user_details"),
     path('logout/', auth.logout, name='logout'),
     
     # Speech paths
