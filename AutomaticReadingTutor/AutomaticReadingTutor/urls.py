@@ -3,6 +3,7 @@ from django.urls import path
 from authentication import views as auth
 from speech import views as voice
 from stories import views as story
+from progress import  views as prog
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -21,4 +22,7 @@ urlpatterns = [
     # library path
     path('stories/', story.get_story, name='stories'),
     path('stories/<str:title>/', story.get_story, name='stories'),
+
+    # Progress path
+    path('progress/', prog.get_progress, name='progress'),
 ]
