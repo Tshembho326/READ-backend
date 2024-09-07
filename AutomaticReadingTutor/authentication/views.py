@@ -182,6 +182,8 @@ def logout(request):
         return JsonResponse('successfully logged out', safe=False)
     return JsonResponse('unsuccessfully logged out', safe=False)
 
+
+# ---------------- Change User Details ----------------
 @api_view(['POST'])
 def changeUserDetails(request):
         try:
