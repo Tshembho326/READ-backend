@@ -13,6 +13,7 @@ from knox.models import AuthToken
 from .serializers import UserSerializer
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from django.views.decorators.csrf import csrf_exempt
+from .models import CustomUser
 
 
 import json
@@ -180,3 +181,26 @@ def logout(request):
 
         return JsonResponse('successfully logged out', safe=False)
     return JsonResponse('unsuccessfully logged out', safe=False)
+
+@api_view(['POST'])
+def changeUserDetails(request):
+        try:
+            body = json.loads(request.body.decode('utf-8'))
+            email = body.get('email')
+
+            if not email:
+                return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                user = CustomUser.objects.get(email=email)
+                user.first_name = body.get('firstName', user.first_name)
+                user.last_name = body.get('lastName', user.last_name)
+                user.save()
+                return Response({'message': 'User details updated successfully.'}, status=status.HTTP_200_OK)
+            except CustomUser.DoesNotExist:
+                return Response({'error': 'User does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+
+        except json.JSONDecodeError:
+            return Response({'error': 'Invalid JSON data'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
