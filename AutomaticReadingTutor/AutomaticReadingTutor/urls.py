@@ -3,7 +3,7 @@ from django.urls import path
 from authentication import views as auth
 from speech import views as voice
 from stories import views as story
-from progress import  views as prog
+from progress import views as prog
 
 urlpatterns = [
     path('admin/', admin.site.urls),
