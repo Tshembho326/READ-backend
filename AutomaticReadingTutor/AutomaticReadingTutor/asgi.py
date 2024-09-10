@@ -8,9 +8,24 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 """
 
 import os
-
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+from django.urls import path
+from speech.consumers import TranscriptionConsumer  # Import your consumer here
 from django.core.asgi import get_asgi_application
+
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'AutomaticReadingTutor.settings')
 
-application = get_asgi_application()
+
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),  # HTTP handling (via Django)
+    "websocket": AuthMiddlewareStack(  # WebSocket handling
+        URLRouter([
+            path("ws/transcribe/", TranscriptionConsumer.as_asgi()),  # Your WebSocket route
+        ])
+    ),
+})
+
+
+

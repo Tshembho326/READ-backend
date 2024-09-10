@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'authentication',
     'rest_framework',
     'knox',
@@ -39,6 +40,15 @@ INSTALLED_APPS = [
     'stories',
     'progress',
 ]
+
+ASGI_APPLICATION = 'AutomaticReadingTutor.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

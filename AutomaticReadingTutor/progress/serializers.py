@@ -14,3 +14,6 @@ class UserProgressSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProgress
         fields = ['total_level', 'accuracy', 'detailed_progress']
+
+
+

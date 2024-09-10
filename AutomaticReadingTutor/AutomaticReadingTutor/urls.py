@@ -16,7 +16,7 @@ urlpatterns = [
     path('change-password/', auth.changePassword, name='change_password'),
     path('change-user-details/', auth.changeUserDetails, name="change_user_details"),
     path('logout/', auth.logout, name='logout'),
-    
+
     # Speech paths
     # path('transcribe/', voice.upload_audio, name='transcribe'),
 
