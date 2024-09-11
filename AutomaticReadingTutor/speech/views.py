@@ -14,6 +14,24 @@ processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
 
 
+def generate_phonemes(text):
+    try:
+        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"  # Full path to espeak
+        result = subprocess.run(
+            [espeak_path, '-q', '--ipa=1', '-ven-za', text],
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        phonemes = result.stdout.strip()
+        phonemes = phonemes.replace('_', ' ')
+        phonemes = phonemes.replace('\'', '')
+        return phonemes
+    except Exception as e:
+        print(f"Error generating phonemes with eSpeak: {e}")
+        return None
+
+
 def transcribe_audio(file):
     """
     Transcribe the provided audio file using the Wav2Vec2 model.
@@ -127,3 +145,20 @@ def align_and_compare(transcription_phonemes, story_phonemes):
 
 
 # A more efficient way of Aligning them
+def map_mismatches_to_words(mismatches, original_text):
+    """
+    Given mismatched phonemes, map them back to words using espeak-ng.
+    """
+    words = original_text.split()
+    mapped_words = []
+
+    # Use espeak-ng to get phonemes for each word
+    for word in words:
+        word_phonemes = generate_phonemes(word)
+        if word_phonemes:
+            # Check if any of the mismatches are in the phonemes
+            for mismatch in mismatches:
+                if mismatch in word_phonemes:
+                    mapped_words.append((word, word_phonemes))
+
+    return mapped_words
