@@ -18,7 +18,7 @@ urlpatterns = [
     path('logout/', auth.logout, name='logout'),
 
     # Speech paths
-    # path('transcribe/', voice.upload_audio, name='transcribe'),
+    path('transcribe/', voice.transcribe_and_compare, name='transcribe'),
 
     # library path
     path('stories/', story.get_story, name='stories'),
