@@ -77,12 +77,14 @@ def transcribe_and_compare(request):
 
             # Transcribe the user audio
             transcription = transcribe_audio(user_audio)
+            results = align_and_compare(transcription, story_phonemes)
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
             return JsonResponse({
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
+                'results': results,
             })
 
         except Exception as e:
@@ -90,3 +92,38 @@ def transcribe_and_compare(request):
             return JsonResponse({'error': 'Internal server error'}, status=500)
 
     return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+def align_and_compare(transcription_phonemes, story_phonemes):
+    transcription_phonemes = transcription_phonemes.split()
+    story_phonemes = story_phonemes.split()
+
+    # Initialize empty list to store comparison results
+    comparison_results = []
+
+    # Determine the length of the shorter sequence for alignment
+    min_length = min(len(transcription_phonemes), len(story_phonemes))
+
+    # Compare phonemes at each position
+    for i in range(min_length):
+        actual_phoneme = transcription_phonemes[i]
+        expected_phoneme = story_phonemes[i]
+
+        if actual_phoneme == expected_phoneme:
+            comparison_results.append(f"Matched: {actual_phoneme}")
+        else:
+            comparison_results.append(f"Mismatch: expected '{expected_phoneme}', but got '{actual_phoneme}'")
+
+    # If there are extra phonemes in one of the sequences, add them to the results
+    if len(transcription_phonemes) > min_length:
+        extra_actual = transcription_phonemes[min_length:]
+        comparison_results.append(f"Extra in transcription: {' '.join(extra_actual)}")
+
+    if len(story_phonemes) > min_length:
+        extra_expected = story_phonemes[min_length:]
+        comparison_results.append(f"Missing in transcription: {' '.join(extra_expected)}")
+
+    return comparison_results
+
+
+# A more efficient way of Aligning them
