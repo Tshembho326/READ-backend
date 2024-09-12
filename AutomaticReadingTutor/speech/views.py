@@ -14,21 +14,22 @@ processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
 
 
-def generate_phonemes(text):
+def phonemes_to_text(phoneme_sequence):
+    """
+    Converts a sequence of phonemes back to English words using espeak.
+    """
     try:
-        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"  # Full path to espeak
+        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
         result = subprocess.run(
-            [espeak_path, '-q', '--ipa=1', '-ven-za', text],
+            [espeak_path, '-q', '--ipa=1', '-ven-za', phoneme_sequence],
             capture_output=True,
             text=True,
             encoding='utf-8'
         )
-        phonemes = result.stdout.strip()
-        phonemes = phonemes.replace('_', ' ')
-        phonemes = phonemes.replace('\'', '')
-        return phonemes
+        text_output = result.stdout.strip()
+        return text_output
     except Exception as e:
-        print(f"Error generating phonemes with eSpeak: {e}")
+        print(f"Error converting phonemes to text with eSpeak: {e}")
         return None
 
 
@@ -73,6 +74,7 @@ def transcribe_audio(file):
 def transcribe_and_compare(request):
     """
     Handle the POST request to transcribe audio, generate phonemes, and compare it with the stored story phonemes.
+    Returns the missed words in English to the frontend.
     """
     if request.method == 'POST':
         try:
@@ -90,19 +92,27 @@ def transcribe_and_compare(request):
             try:
                 story = Story.objects.get(title=story_title)
                 story_phonemes = story.phoneme_content  # Use the pre-generated phonemes that are stored in the DB
+                story_text = story.content         # The actual story text content (in English)
             except Story.DoesNotExist:
                 return JsonResponse({'error': 'Story not found'}, status=404)
 
             # Transcribe the user audio
             transcription = transcribe_audio(user_audio)
-            results = align_and_compare(transcription, story_phonemes)
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
+
+            # Perform phoneme comparison and get mismatches
+            mismatched_phonemes = []
+            results, missed_word_indices = align_and_compare(transcription, story_phonemes, mismatched_phonemes)
+
+            # Convert the missed phoneme indices to actual English words from the story
+            missed_words = extract_missed_words(story_text, missed_word_indices)
 
             return JsonResponse({
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
                 'results': results,
+                'missed_words': missed_words  # Send the missed words back to the frontend as English
             })
 
         except Exception as e:
@@ -112,53 +122,73 @@ def transcribe_and_compare(request):
     return JsonResponse({'error': 'Invalid request method'}, status=400)
 
 
-def align_and_compare(transcription_phonemes, story_phonemes):
+def align_and_compare(transcription_phonemes, story_phonemes, mismatched_phonemes):
+    """
+    Compare transcription phonemes with story phonemes, return comparison results,
+    and collect mismatched phonemes. Also tracks which phonemes in the story were missed.
+    """
     transcription_phonemes = transcription_phonemes.split()
     story_phonemes = story_phonemes.split()
 
-    # Initialize empty list to store comparison results
+    # Initialize empty list to store comparison results and word indices of mismatches
     comparison_results = []
+    missed_word_indices = []
 
-    # Determine the length of the shorter sequence for alignment
-    min_length = min(len(transcription_phonemes), len(story_phonemes))
+    i = 0
+    j = 0
+    len_trans = len(transcription_phonemes)
+    len_story = len(story_phonemes)
 
-    # Compare phonemes at each position
-    for i in range(min_length):
+    # Iterate over both phoneme sequences
+    while i < len_trans and j < len_story:
         actual_phoneme = transcription_phonemes[i]
-        expected_phoneme = story_phonemes[i]
+        expected_phoneme = story_phonemes[j]
 
+        # Compare phonemes at the current position
         if actual_phoneme == expected_phoneme:
             comparison_results.append(f"Matched: {actual_phoneme}")
+            i += 1
+            j += 1
         else:
-            comparison_results.append(f"Mismatch: expected '{expected_phoneme}', but got '{actual_phoneme}'")
+            # Store the mismatched phoneme from the story and track word index
+            mismatched_phonemes.append(expected_phoneme)
+            missed_word_indices.append(j)  # Track the index of the missed phoneme in the story
 
-    # If there are extra phonemes in one of the sequences, add them to the results
-    if len(transcription_phonemes) > min_length:
-        extra_actual = transcription_phonemes[min_length:]
+            # Check if the transcription phoneme matches the next story phoneme
+            if j + 1 < len_story and actual_phoneme == story_phonemes[j + 1]:
+                comparison_results.append(
+                    f"Mismatch: expected '{expected_phoneme}', but matched '{actual_phoneme}' with next story phoneme")
+                i += 1
+                j += 2  # Skip over the next story phoneme as it's already matched
+            # Check if the story phoneme matches the next transcription phoneme
+            elif i + 1 < len_trans and transcription_phonemes[i + 1] == expected_phoneme:
+                comparison_results.append(
+                    f"Mismatch: expected '{expected_phoneme}', but matched next transcription phoneme '{transcription_phonemes[i + 1]}'")
+                i += 2  # Skip over the next transcription phoneme as it's already matched
+                j += 1
+            else:
+                comparison_results.append(f"Mismatch: expected '{expected_phoneme}', but got '{actual_phoneme}'")
+                i += 1
+                j += 1
+
+    # If there are remaining phonemes in either sequence, add them to the results
+    if i < len_trans:
+        extra_actual = transcription_phonemes[i:]
         comparison_results.append(f"Extra in transcription: {' '.join(extra_actual)}")
-
-    if len(story_phonemes) > min_length:
-        extra_expected = story_phonemes[min_length:]
+    if j < len_story:
+        extra_expected = story_phonemes[j:]
         comparison_results.append(f"Missing in transcription: {' '.join(extra_expected)}")
+        mismatched_phonemes.extend(extra_expected)  # Add the remaining missing phonemes to mismatches
+        missed_word_indices.extend(range(j, len_story))  # Track the remaining missed phonemes
 
-    return comparison_results
+    return comparison_results, missed_word_indices
 
 
-# A more efficient way of Aligning them
-def map_mismatches_to_words(mismatches, original_text):
+def extract_missed_words(story_text, missed_word_indices):
     """
-    Given mismatched phonemes, map them back to words using espeak-ng.
+    Given the story text and the indices of the missed phonemes, return the actual missed words.
+    Assumes that the phoneme list and text content correspond to one another.
     """
-    words = original_text.split()
-    mapped_words = []
-
-    # Use espeak-ng to get phonemes for each word
-    for word in words:
-        word_phonemes = generate_phonemes(word)
-        if word_phonemes:
-            # Check if any of the mismatches are in the phonemes
-            for mismatch in mismatches:
-                if mismatch in word_phonemes:
-                    mapped_words.append((word, word_phonemes))
-
-    return mapped_words
+    words = story_text.split()  # Split the story into words
+    missed_words = [words[i] for i in missed_word_indices if i < len(words)]  # Get words corresponding to missed phonemes
+    return ' '.join(missed_words)
