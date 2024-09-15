@@ -7,6 +7,7 @@ from .serializers import UserProgressSerializer
 from .calculations import calculate_accuracy
 
 
+@login_required
 @require_GET
 def get_progress(request):
     # Get the current logged-in user

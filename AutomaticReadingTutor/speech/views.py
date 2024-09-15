@@ -1,13 +1,20 @@
 import torch
 import subprocess
+import os
+import tempfile
+
 from rest_framework.decorators import api_view
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 from django.http import JsonResponse
 from pydub import AudioSegment
+from django.views.decorators.csrf import csrf_exempt
+
+from progress.calculations import calculate_accuracy
+from progress.models import UserProgress, DetailedProgress
 from stories.models import Story
+
 import io
 import numpy as np
-from django.views.decorators.csrf import csrf_exempt
 
 # Load the Wav2Vec2 model and processor
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
@@ -33,17 +40,34 @@ def phonemes_to_text(phoneme_sequence):
         return None
 
 
-def transcribe_audio(file):
+def convert_audio(audio_file):
+    """
+    Convert the uploaded audio file to WAV format and return the path.
+    """
+    # Create a temporary file to store the WAV file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_wav:
+        wav_path = temp_wav.name
+
+    try:
+        # Convert the uploaded file to WAV format using pydub
+        audio = AudioSegment.from_file(audio_file)
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        audio.export(wav_path, format="wav")
+    except Exception as e:
+        print(f"Error converting audio file: {e}")
+        os.remove(wav_path)  # Clean up temporary file
+        raise
+
+    return wav_path
+
+
+def transcribe_audio(file_path):
     """
     Transcribe the provided audio file using the Wav2Vec2 model.
     """
     try:
-        # Ensure the file is not None and is in WAV format
-        if file is None:
-            raise ValueError("No file provided")
-
         # Load and process the audio file
-        audio = AudioSegment.from_file(file, format="wav")
+        audio = AudioSegment.from_file(file_path, format="wav")
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
 
         # Convert audio to numpy array
@@ -65,7 +89,6 @@ def transcribe_audio(file):
         return transcription[0]
 
     except Exception as e:
-        # Handle and log exceptions
         print(f"Error in transcribing audio: {e}")
         return None
 
@@ -92,12 +115,14 @@ def transcribe_and_compare(request):
             try:
                 story = Story.objects.get(title=story_title)
                 story_phonemes = story.phoneme_content  # Use the pre-generated phonemes that are stored in the DB
-                story_text = story.content         # The actual story text content (in English)
+                story_text = story.content  # The actual story text content (in English)
             except Story.DoesNotExist:
                 return JsonResponse({'error': 'Story not found'}, status=404)
 
-            # Transcribe the user audio
-            transcription = transcribe_audio(user_audio)
+            # Convert and transcribe the user audio
+            wav_path = convert_audio(user_audio)
+            transcription = transcribe_audio(wav_path)
+            os.remove(wav_path)  # Clean up temporary file
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
@@ -108,11 +133,12 @@ def transcribe_and_compare(request):
             # Convert the missed phoneme indices to actual English words from the story
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
+            # Return the response with the transcription, results, and missed words
             return JsonResponse({
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
                 'results': results,
-                'missed_words': missed_words  # Send the missed words back to the frontend as English
+                'missed_words': missed_words
             })
 
         except Exception as e:
@@ -187,8 +213,13 @@ def align_and_compare(transcription_phonemes, story_phonemes, mismatched_phoneme
 def extract_missed_words(story_text, missed_word_indices):
     """
     Given the story text and the indices of the missed phonemes, return the actual missed words.
-    Assumes that the phoneme list and text content correspond to one another.
+    Assumes that the phoneme list and story text can be used to find the exact missed words.
     """
-    words = story_text.split()  # Split the story into words
-    missed_words = [words[i] for i in missed_word_indices if i < len(words)]  # Get words corresponding to missed phonemes
-    return ' '.join(missed_words)
+    words = story_text.split()
+    missed_words = []
+
+    for idx in missed_word_indices:
+        if idx < len(words):
+            missed_words.append(words[idx])
+
+    return missed_words
