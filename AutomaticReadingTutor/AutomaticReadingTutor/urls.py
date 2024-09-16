@@ -4,6 +4,8 @@ from authentication import views as auth
 from speech import views as voice
 from stories import views as story
 from progress import views as prog
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,4 +28,4 @@ urlpatterns = [
 
     # Progress path
     path('progress/', prog.get_progress, name='progress'),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

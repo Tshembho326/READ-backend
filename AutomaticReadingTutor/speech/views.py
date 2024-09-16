@@ -13,6 +13,7 @@ from django.views.decorators.csrf import csrf_exempt
 from progress.calculations import calculate_accuracy
 from progress.models import UserProgress, DetailedProgress
 
+from django.conf import settings
 from stories.models import Story
 
 import io
@@ -21,6 +22,19 @@ import numpy as np
 # Load the Wav2Vec2 model and processor
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+
+
+def generate_speech(text, output_path):
+    """
+    Generate audio file for the given text using espeak.
+    """
+    try:
+        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+        command = [espeak_path, '-w', output_path, text]
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating speech: {e}")
+        raise
 
 
 def convert_audio(audio_file):
@@ -155,7 +169,7 @@ def extract_missed_words(story_text, missed_word_indices):
 def transcribe_and_compare(request):
     """
     Handle the POST request to transcribe audio, generate phonemes, and compare it with the stored story phonemes.
-    Returns the missed words in English to the frontend.
+    Returns the missed words in English and their corresponding audio to the frontend.
     """
     if request.method == 'POST':
         try:
@@ -190,13 +204,58 @@ def transcribe_and_compare(request):
             # Convert the missed phoneme indices to actual English words from the story
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
-            # Return the response with the transcription, results, and missed words
-            return JsonResponse({
+            total_words = len(story_text.split())  # Total words in the story
+            correct_words = total_words - len(missed_words)  # Correct words based on missed words
+
+            # Generate audio files for missed words and create URLs
+            audio_files = []
+            audio_urls = []
+            for word in missed_words:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
+                    audio_path = temp_audio.name
+                try:
+                    generate_speech(word, audio_path)
+                    audio_files.append(audio_path)
+                    audio_urls.append(f"{settings.MEDIA_URL}{os.path.basename(audio_path)}")  # Create URL
+                except Exception as e:
+                    print(f"Error generating audio file for '{word}': {e}")
+
+                    # Save the progress for the current user
+                    user_progress, created = UserProgress.objects.get_or_create(user=request.user)
+
+                    #
+                    # Update or create the detailed progress for this story/level
+                    detailed_progress, created = DetailedProgress.objects.get_or_create(
+                        user_progress=user_progress,
+                        level=9,
+                        defaults={
+                            'total_words': total_words,
+                            'correct_words': correct_words,
+                            'progress': (correct_words / total_words) * 100 if total_words > 0 else 0
+                        }
+                    )
+                    #
+                    if not created:
+                        # If DetailedProgress already exists, update it
+                        detailed_progress.total_words = total_words
+                        detailed_progress.correct_words = correct_words
+                        detailed_progress.progress = (correct_words / total_words) * 100 if total_words > 0 else 0
+                        detailed_progress.save()
+
+            # Prepare response with the transcription, results, missed words, and audio URLs
+            response_data = {
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
                 'results': results,
-                'missed_words': missed_words
-            }, status=200)
+                'missed_words': missed_words,
+                'audio_files': audio_urls  # Include URLs in response
+            }
+
+            # Clean up temporary audio files
+            for file in audio_files:
+                os.remove(file)
+
+            return JsonResponse(response_data, status=200)
 
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)

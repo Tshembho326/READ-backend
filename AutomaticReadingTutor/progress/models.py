@@ -17,6 +17,7 @@ class DetailedProgress(models.Model):
     level = models.CharField(max_length=50)
     level_value = models.IntegerField(default=0, blank=True)
     progress = models.FloatField(default=0, blank=True)
+
     # Add fields to store speech app data
     total_words = models.IntegerField(default=0)
     correct_words = models.IntegerField(default=0)
