@@ -15,8 +15,13 @@ class UserProgress(models.Model):
 class DetailedProgress(models.Model):
     user_progress = models.ForeignKey(UserProgress, related_name='detailed_progress', on_delete=models.CASCADE)
     level = models.CharField(max_length=50)
-    level_value = models.IntegerField()
-    progress = models.FloatField()
+    level_value = models.IntegerField(default=0, blank=True)
+    progress = models.FloatField(default=0, blank=True)
+
+    # Add fields to store speech app data
+    total_words = models.IntegerField(default=0)
+    correct_words = models.IntegerField(default=0)
 
     def __str__(self):
         return f"{self.level} - Level {self.level_value}"
+
