@@ -1,32 +1,28 @@
-from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
-from django.views.decorators.http import require_GET
-from django.contrib.auth.decorators import login_required
-from .models import UserProgress
-from .serializers import UserProgressSerializer
-from .calculations import calculate_accuracy
+from rest_framework.decorators import api_view
+
+from progress.models import UserProgress
 
 
-@login_required
-@require_GET
+@api_view(['GET'])
 def get_progress(request):
-    # Get the current logged-in user
+    """
+    Retrieve the progress of the currently authenticated user.
+    """
     user = request.user
 
-    # Retrieve user progress data or return a 404 if not found
-    user_progress = get_object_or_404(UserProgress, user=user)
+    if not user.is_authenticated:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
 
-    # Calculate accuracy only if necessary (for example, if progress changed)
-    new_accuracy = calculate_accuracy(user_progress)
+    try:
+        user_progress = UserProgress.objects.get(user=user)
+        progress_data = {
+            'total_words': user_progress.total_words,
+            'correct_words': user_progress.correct_words,
+            'progress_percentage': user_progress.progress,
+            'accuracy': user_progress.accuracy
+        }
+        return JsonResponse(progress_data)
 
-    # Update accuracy only if it has changed
-    if user_progress.accuracy != new_accuracy:
-        user_progress.accuracy = new_accuracy
-        user_progress.save()
-
-    # Serialize the user progress data
-    serializer = UserProgressSerializer(user_progress)
-
-    # Return JSON response with the serialized data
-    return JsonResponse(serializer.data, status=200)
-
+    except UserProgress.DoesNotExist:
+        return JsonResponse({'error': 'User progress not found'}, status=404)
