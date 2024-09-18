@@ -1,27 +1,14 @@
-
 from django.db import models
 from AutomaticReadingTutor import settings
 
 
 class UserProgress(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    total_level = models.IntegerField(default=0)
-    accuracy = models.FloatField(default=0.0)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    total_words = models.IntegerField(default=None)
+    correct_words = models.IntegerField(default=None)
+    accuracy = models.FloatField(null=True, blank=True, default=None)  # Optional: You can calculate it later
 
-    def __str__(self):
-        return f"{self.user.first_name}'s Progress"
-
-
-class DetailedProgress(models.Model):
-    user_progress = models.ForeignKey(UserProgress, related_name='detailed_progress', on_delete=models.CASCADE)
-    level = models.CharField(max_length=50)
-    level_value = models.IntegerField(default=0, blank=True)
-    progress = models.FloatField(default=0, blank=True)
-
-    # Add fields to store speech app data
-    total_words = models.IntegerField(default=0)
-    correct_words = models.IntegerField(default=0)
-
-    def __str__(self):
-        return f"{self.level} - Level {self.level_value}"
-
+    def save(self, *args, **kwargs):
+        if self.total_words and self.correct_words:
+            self.accuracy = (self.correct_words / self.total_words) * 100
+        super().save(*args, **kwargs)

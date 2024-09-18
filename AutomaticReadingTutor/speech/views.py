@@ -2,7 +2,9 @@ import torch
 import subprocess
 import os
 import tempfile
+import json
 
+from django.contrib.auth.decorators import login_required
 from rest_framework.decorators import api_view
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 from django.http import JsonResponse
@@ -10,12 +12,14 @@ from pydub import AudioSegment
 from difflib import SequenceMatcher
 from django.views.decorators.csrf import csrf_exempt
 
+from authentication.models import CustomUser
 from progress.calculations import calculate_accuracy
-from progress.models import UserProgress, DetailedProgress
+from progress.models import UserProgress
 
 from django.conf import settings
 from stories.models import Story
 
+from django.core.files.storage import FileSystemStorage
 import io
 import numpy as np
 
@@ -25,13 +29,14 @@ model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
 
 
 def generate_speech(text, output_path):
-    """
-    Generate audio file for the given text using espeak.
-    """
     try:
         espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
         command = [espeak_path, '-w', output_path, text]
         subprocess.run(command, check=True)
+
+        # Use Django's FileSystemStorage to serve files from the temp directory
+        fs = FileSystemStorage(location='C:/Users/TSHEMB~1/AppData/Local/Temp')
+        return fs.url(output_path)
     except subprocess.CalledProcessError as e:
         print(f"Error generating speech: {e}")
         raise
@@ -184,19 +189,24 @@ def transcribe_and_compare(request):
             if not story_title:
                 return JsonResponse({'error': 'Story title not provided'}, status=400)
 
-            try:
-                story = Story.objects.get(title=story_title)
-                story_phonemes = story.phoneme_content  # Use the pre-generated phonemes stored in the DB
-                story_text = story.content  # The actual story text content (in English)
-            except Story.DoesNotExist:
-                return JsonResponse({'error': 'Story not found'}, status=404)
-
             # Convert and transcribe the user audio
             wav_path = convert_audio(user_audio)
             transcription = transcribe_audio(wav_path)
+            num_transcribed_phonemes = len(transcription)
+
             os.remove(wav_path)  # Clean up temporary file
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
+
+            # Fetch the relevant phonemes based on the number of transcribed phonemes
+            story_phonemes = fetch_relevant_phonemes(story_title, num_transcribed_phonemes)
+
+            # Get the full story content (for extracting missed words later)
+            try:
+                story = Story.objects.get(title=story_title)
+                story_text = story.content  # The actual story text content (in English)
+            except Story.DoesNotExist:
+                return JsonResponse({'error': 'Story not found'}, status=404)
 
             # Perform phoneme comparison using Levenshtein distance and get mismatches
             results, missed_word_indices = align_with_levenshtein(transcription, story_phonemes)
@@ -206,6 +216,7 @@ def transcribe_and_compare(request):
 
             total_words = len(story_text.split())  # Total words in the story
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
+            accuracy = calculate_accuracy(total_words, correct_words)
 
             # Generate audio files for missed words and create URLs
             audio_files = []
@@ -220,35 +231,16 @@ def transcribe_and_compare(request):
                 except Exception as e:
                     print(f"Error generating audio file for '{word}': {e}")
 
-                    # Save the progress for the current user
-                    user_progress, created = UserProgress.objects.get_or_create(user=request.user)
-
-                    #
-                    # Update or create the detailed progress for this story/level
-                    detailed_progress, created = DetailedProgress.objects.get_or_create(
-                        user_progress=user_progress,
-                        level=9,
-                        defaults={
-                            'total_words': total_words,
-                            'correct_words': correct_words,
-                            'progress': (correct_words / total_words) * 100 if total_words > 0 else 0
-                        }
-                    )
-                    #
-                    if not created:
-                        # If DetailedProgress already exists, update it
-                        detailed_progress.total_words = total_words
-                        detailed_progress.correct_words = correct_words
-                        detailed_progress.progress = (correct_words / total_words) * 100 if total_words > 0 else 0
-                        detailed_progress.save()
-
             # Prepare response with the transcription, results, missed words, and audio URLs
             response_data = {
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
+                'total_words': total_words,
+                'correct_words': correct_words,
+                'accuracy': accuracy,
                 'results': results,
                 'missed_words': missed_words,
-                'audio_files': audio_urls  # Include URLs in response
+                'audio_urls': audio_urls,
             }
 
             # Clean up temporary audio files
@@ -262,3 +254,21 @@ def transcribe_and_compare(request):
 
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
+
+def fetch_relevant_phonemes(story_title, num_phonemes):
+    """
+    Fetch a subset of phonemes from a story based on the number of transcribed phonemes plus a buffer.
+    """
+    try:
+        # Fetch the story based on the title
+        story = Story.objects.get(title=story_title)
+        phonemes = story.phoneme_content
+
+        # Return a subset of phonemes (num_phonemes + 2 buffer)
+        return phonemes[:num_phonemes + 6]
+    except Story.DoesNotExist:
+        print(f"Story with title '{story_title}' does not exist.")
+        raise
+    except Exception as e:
+        print(f"Error fetching relevant phonemes: {e}")
+        raise
