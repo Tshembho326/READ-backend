@@ -178,7 +178,10 @@ def transcribe_and_compare(request):
     """
     if request.method == 'POST':
         try:
+            print(request.POST)
+            username = request.POST.get('email')
             user_audio = request.FILES.get('audio')
+            user = CustomUser.objects.get(email=username)
 
             # Check if the audio file is valid
             if not user_audio:
@@ -217,6 +220,14 @@ def transcribe_and_compare(request):
             total_words = len(story_text.split())  # Total words in the story
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
             accuracy = calculate_accuracy(total_words, correct_words)
+
+            progress = UserProgress.objects.create(
+                user=user,
+                accuracy=accuracy,
+                total_words=total_words,
+                correct_words=correct_words
+            )
+            progress.save()
 
             # Generate audio files for missed words and create URLs
             audio_files = []
