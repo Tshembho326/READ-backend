@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 from django.views.decorators.csrf import csrf_exempt
 
 from authentication.models import CustomUser
-from progress.calculations import calculate_accuracy
+from progress.calculations import calculate_accuracy, calculate_level
 from progress.models import UserProgress
 
 from django.conf import settings
@@ -178,7 +178,6 @@ def transcribe_and_compare(request):
     """
     if request.method == 'POST':
         try:
-            print(request.POST)
             username = request.POST.get('email')
             user_audio = request.FILES.get('audio')
             user = CustomUser.objects.get(email=username)
@@ -220,14 +219,22 @@ def transcribe_and_compare(request):
             total_words = len(story_text.split())  # Total words in the story
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
             accuracy = calculate_accuracy(total_words, correct_words)
+            level = calculate_level(accuracy)
 
-            progress = UserProgress.objects.create(
+            progress, created = UserProgress.objects.get_or_create(
                 user=user,
-                accuracy=accuracy,
-                total_words=total_words,
-                correct_words=correct_words
+                defaults={
+                    'accuracy': accuracy,
+                    'total_words': total_words,
+                    'correct_words': correct_words,
+                }
             )
-            progress.save()
+
+            if not created:
+                progress.accuracy = accuracy
+                progress.total_words = total_words
+                progress.correct_words = correct_words
+                progress.save()
 
             # Generate audio files for missed words and create URLs
             audio_files = []
@@ -246,10 +253,10 @@ def transcribe_and_compare(request):
             response_data = {
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
+                'results': results,
+                'accuracy': accuracy,
                 'total_words': total_words,
                 'correct_words': correct_words,
-                'accuracy': accuracy,
-                'results': results,
                 'missed_words': missed_words,
                 'audio_urls': audio_urls,
             }

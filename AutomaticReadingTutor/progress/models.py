@@ -5,7 +5,7 @@ from authentication.models import CustomUser
 
 class UserProgress(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    total_words = models.IntegerField(default=None)
-    correct_words = models.IntegerField(default=None)
-    accuracy = models.FloatField(null=True, blank=True, default=None)  # Optional: You can calculate it later
-
+    total_words = models.IntegerField(default=0)
+    correct_words = models.IntegerField(default=0)
+  #  level = models.IntegerField(default=0)
+    accuracy = models.FloatField(null=True, blank=True, default=0)
