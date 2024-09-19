@@ -126,9 +126,7 @@ def align_with_levenshtein(transcription_phonemes, story_phonemes):
     Return the mismatches and the word indices where the transcription differs.
     """
     transcription_phonemes = transcription_phonemes.split()
-    print("Transcription Phonemes", transcription_phonemes)
     story_phonemes = story_phonemes.split()
-    print("Story Phonemes", story_phonemes)
 
     # Calculate the Levenshtein distance
     distance = levenshtein_distance(transcription_phonemes, story_phonemes)
@@ -203,17 +201,7 @@ def transcribe_and_compare(request):
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
-            # Fetch the relevant phonemes based on the number of transcribed phonemes
-            #story_phonemes = fetch_relevant_phonemes(story_title, num_transcribed_phonemes)
-            #print("Related phonemes from the db", story_phonemes)
-
-            # Get the full story content (for extracting missed words later)
-            #story_text = fetch_relevant_story(story_title, num_transcribed_phonemes)
-            #print("Related story from the db", story_text)
-
-            story_text, story_phonemes = get_final_text_and_phonemes()
-            print("Related story from the db", story_text)
-            print("Related phonemes from the db", story_phonemes)
+            story_text, story_phonemes = get_final_text_and_phonemes()   # Getting the phonemes and words sent by the frontend
 
             # Perform phoneme comparison using Levenshtein distance and get mismatches
             results, missed_word_indices = align_with_levenshtein(transcription, story_phonemes)
@@ -222,11 +210,8 @@ def transcribe_and_compare(request):
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
             total_words = len(story_text.split())  # Total words in the story
-            print("Total Words", total_words)
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
-            print("Correct words", correct_words)
             accuracy = calculate_accuracy(total_words, correct_words)
-            print("Accuracy", accuracy)
 
             progress, created = UserProgress.objects.get_or_create(
                 user=user,
@@ -234,6 +219,7 @@ def transcribe_and_compare(request):
                     'accuracy': accuracy,
                     'total_words': total_words,
                     'correct_words': correct_words,
+                    'missed_words': missed_words
                 }
             )
 
@@ -241,6 +227,7 @@ def transcribe_and_compare(request):
                 progress.accuracy = accuracy
                 progress.total_words = total_words
                 progress.correct_words = correct_words
+                progress.missed_words = missed_words
                 progress.save()
 
             # Generate audio files for missed words and create URLs
@@ -279,45 +266,6 @@ def transcribe_and_compare(request):
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
 
-def fetch_relevant_phonemes(story_title, num_phonemes):
-    """
-    Fetch a subset of phonemes from a story based on the number of transcribed phonemes plus a buffer.
-    """
-    try:
-        # Fetch the story based on the title
-        story = Story.objects.get(title=story_title)
-        phonemes = story.phoneme_content
-
-        # Return a subset of phonemes (num_phonemes + 2 buffer)
-        return phonemes[:num_phonemes + 6]
-    except Story.DoesNotExist:
-        print(f"Story with title '{story_title}' does not exist.")
-        raise
-    except Exception as e:
-        print(f"Error fetching relevant phonemes: {e}")
-        raise
-
-
-def fetch_relevant_story(story_title, num_phonemes):
-    """
-    Fetch a subset of words from a story based on the number of transcribed phonemes plus a buffer.
-    """
-    try:
-        story = Story.objects.get(title=story_title)
-        story_content = story.content
-        num_phonemes = num_phonemes - 6
-
-        return story_content[:num_phonemes]
-    except Story.DoesNotExist:
-        print(f"Story with title '{story_title}' does not exist.")
-        raise
-    except Exception as e:
-        print(f"Error fetching relevant phonemes: {e}")
-        raise
-
-############################
-
-
 # Global variable to accumulate lines
 accumulated_lines = []
 final_text = ""
@@ -340,7 +288,7 @@ def convert_to_phonemes(request):
             if is_final:
                 # When it's the final batch of lines, concatenate and generate phonemes
                 final_text = ' '.join(accumulated_lines)
-                final_phonemes = generate_phonemes(final_text)
+                final_phonemes = ''.join(generate_phonemes(final_text))
 
                 # Clear the accumulated lines after generating phonemes
                 accumulated_lines = []
