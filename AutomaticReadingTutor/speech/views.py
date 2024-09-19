@@ -4,8 +4,6 @@ import os
 import tempfile
 import json
 
-from django.contrib.auth.decorators import login_required
-from rest_framework.decorators import api_view
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 from django.http import JsonResponse
 from pydub import AudioSegment
@@ -128,7 +126,9 @@ def align_with_levenshtein(transcription_phonemes, story_phonemes):
     Return the mismatches and the word indices where the transcription differs.
     """
     transcription_phonemes = transcription_phonemes.split()
+    print("Transcription Phonemes", transcription_phonemes)
     story_phonemes = story_phonemes.split()
+    print("Story Phonemes", story_phonemes)
 
     # Calculate the Levenshtein distance
     distance = levenshtein_distance(transcription_phonemes, story_phonemes)
@@ -181,6 +181,7 @@ def transcribe_and_compare(request):
             username = request.POST.get('email')
             user_audio = request.FILES.get('audio')
             user = CustomUser.objects.get(email=username)
+            print("User", user)
 
             # Check if the audio file is valid
             if not user_audio:
@@ -194,21 +195,25 @@ def transcribe_and_compare(request):
             # Convert and transcribe the user audio
             wav_path = convert_audio(user_audio)
             transcription = transcribe_audio(wav_path)
+            print("Initial transcription", transcription)
             num_transcribed_phonemes = len(transcription)
+            print("Length of the transcription", num_transcribed_phonemes)
 
             os.remove(wav_path)  # Clean up temporary file
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
             # Fetch the relevant phonemes based on the number of transcribed phonemes
-            story_phonemes = fetch_relevant_phonemes(story_title, num_transcribed_phonemes)
+            #story_phonemes = fetch_relevant_phonemes(story_title, num_transcribed_phonemes)
+            #print("Related phonemes from the db", story_phonemes)
 
             # Get the full story content (for extracting missed words later)
-            try:
-                story = Story.objects.get(title=story_title)
-                story_text = story.content  # The actual story text content (in English)
-            except Story.DoesNotExist:
-                return JsonResponse({'error': 'Story not found'}, status=404)
+            #story_text = fetch_relevant_story(story_title, num_transcribed_phonemes)
+            #print("Related story from the db", story_text)
+
+            story_text, story_phonemes = get_final_text_and_phonemes()
+            print("Related story from the db", story_text)
+            print("Related phonemes from the db", story_phonemes)
 
             # Perform phoneme comparison using Levenshtein distance and get mismatches
             results, missed_word_indices = align_with_levenshtein(transcription, story_phonemes)
@@ -217,9 +222,11 @@ def transcribe_and_compare(request):
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
             total_words = len(story_text.split())  # Total words in the story
+            print("Total Words", total_words)
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
+            print("Correct words", correct_words)
             accuracy = calculate_accuracy(total_words, correct_words)
-            level = calculate_level(accuracy)
+            print("Accuracy", accuracy)
 
             progress, created = UserProgress.objects.get_or_create(
                 user=user,
@@ -254,7 +261,6 @@ def transcribe_and_compare(request):
                 'transcription': transcription,
                 'story_phonemes': story_phonemes,
                 'results': results,
-                'accuracy': accuracy,
                 'total_words': total_words,
                 'correct_words': correct_words,
                 'missed_words': missed_words,
@@ -290,3 +296,87 @@ def fetch_relevant_phonemes(story_title, num_phonemes):
     except Exception as e:
         print(f"Error fetching relevant phonemes: {e}")
         raise
+
+
+def fetch_relevant_story(story_title, num_phonemes):
+    """
+    Fetch a subset of words from a story based on the number of transcribed phonemes plus a buffer.
+    """
+    try:
+        story = Story.objects.get(title=story_title)
+        story_content = story.content
+        num_phonemes = num_phonemes - 6
+
+        return story_content[:num_phonemes]
+    except Story.DoesNotExist:
+        print(f"Story with title '{story_title}' does not exist.")
+        raise
+    except Exception as e:
+        print(f"Error fetching relevant phonemes: {e}")
+        raise
+
+############################
+
+
+# Global variable to accumulate lines
+accumulated_lines = []
+final_text = ""
+final_phonemes = ""
+
+
+@csrf_exempt
+def convert_to_phonemes(request):
+    global accumulated_lines, final_text, final_phonemes
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            new_lines = data.get('lines', [])
+            is_final = data.get('is_final', False)  # A flag to check if it's the last part
+
+            # Append the new lines to the global accumulated lines list
+            accumulated_lines.extend(new_lines)
+
+            if is_final:
+                # When it's the final batch of lines, concatenate and generate phonemes
+                final_text = ' '.join(accumulated_lines)
+                final_phonemes = generate_phonemes(final_text)
+
+                # Clear the accumulated lines after generating phonemes
+                accumulated_lines = []
+                return JsonResponse({'phonemes': final_phonemes})
+            else:
+                return JsonResponse({'message': 'Lines received, waiting for final part.'})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+def generate_phonemes(text):
+    try:
+        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+        result = subprocess.run(
+            [espeak_path, '-q', '--ipa=1', '-ven-za', text],
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        phonemes = result.stdout.strip()
+        phonemes = phonemes.replace('_', ' ')
+        phonemes = phonemes.replace('\'', '')
+        return phonemes
+    except Exception as e:
+        print(f"Error generating phonemes with eSpeak: {e}")
+        return None
+
+
+# New function to retrieve the full text and phonemes
+def get_final_text_and_phonemes():
+    global final_text, final_phonemes
+
+    if final_text and final_phonemes:
+        # Return both the final concatenated text and phonemes
+        return final_text, final_phonemes
+    else:
+        return None, None

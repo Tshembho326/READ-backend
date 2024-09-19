@@ -5,7 +5,7 @@ def calculate_accuracy(total_words, correct_words):
     """
 
     accuracy = (correct_words / total_words) * 100 if total_words > 0 else 0
-    return accuracy
+    return round(accuracy, 2)
 
 
 def calculate_level(accuracy):
