@@ -247,8 +247,7 @@ def transcribe_and_compare(request):
                 defaults={
                     'accuracy': accuracy,
                     'total_words': total_words,
-                    'correct_words': correct_words,
-                    'missed_words': missed_words
+                    'correct_words': correct_words
                 }
             )
             if not created:
@@ -274,7 +273,6 @@ def transcribe_and_compare(request):
                 'audio_files': audio_files,  # Base64 encoded audio data
                 'total_words': total_words,
                 'correct_words': correct_words,
-                # Add other results here
             }
 
             return JsonResponse(response_data)
