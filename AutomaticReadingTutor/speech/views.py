@@ -307,9 +307,6 @@ def convert_to_phonemes(request):
                 final_text = ' '.join(accumulated_lines)
                 final_phonemes = ''.join(generate_phonemes(final_text))
 
-                print("Final Text", final_text)
-                print("Final phonemes", final_phonemes)
-
                 # Clear the accumulated lines after generating phonemes
                 accumulated_lines = []
                 return JsonResponse({'phonemes': final_phonemes})
