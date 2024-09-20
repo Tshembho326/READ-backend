@@ -21,6 +21,7 @@ urlpatterns = [
 
     # Speech paths
     path('transcribe/', voice.transcribe_and_compare, name='transcribe'),
+    path('convert-to-phonemes/', voice.convert_to_phonemes, name='convert_to_phonemes'),
 
     # library path
     path('stories/', story.get_story, name='stories'),

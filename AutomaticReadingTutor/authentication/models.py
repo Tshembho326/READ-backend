@@ -4,7 +4,7 @@ from django.utils import timezone
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, email, first_name, last_name, password=None, **extra_fields):
+    def create_user(self,id , email, first_name, last_name, password=None, **extra_fields):
         if not email:
             raise ValueError('The Email field must be set')
         if not first_name:
@@ -14,6 +14,7 @@ class CustomUserManager(BaseUserManager):
 
         email = self.normalize_email(email)
         user = self.model(
+            id=id,
             email=email,
             first_name=first_name,
             last_name=last_name,
@@ -23,7 +24,7 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, password, email=None, first_name=None, last_name=None, **extra_fields):
+    def create_superuser(self, password, id=None, email=None, first_name=None, last_name=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
 
@@ -31,6 +32,7 @@ class CustomUserManager(BaseUserManager):
             raise ValueError('The Password field must be set')
 
         return self.create_user(
+            id=id,
             email=email,
             first_name=first_name,
             last_name=last_name,
@@ -40,6 +42,7 @@ class CustomUserManager(BaseUserManager):
 
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
+    id = models.AutoField(primary_key=True)
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=30)
     last_name = models.CharField(max_length=30)

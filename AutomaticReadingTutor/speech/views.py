@@ -1,20 +1,20 @@
+import base64
+
 import torch
 import subprocess
 import os
 import tempfile
+import json
 
-from rest_framework.decorators import api_view
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 from django.http import JsonResponse
 from pydub import AudioSegment
 from difflib import SequenceMatcher
 from django.views.decorators.csrf import csrf_exempt
 
+from authentication.models import CustomUser
 from progress.calculations import calculate_accuracy
-from progress.models import UserProgress, DetailedProgress
-
-from django.conf import settings
-from stories.models import Story
+from progress.models import UserProgress
 
 import io
 import numpy as np
@@ -24,17 +24,57 @@ processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
 
 
+def generate_audio_for_word(word):
+    """
+    Generate a WAV file for the given word using eSpeak and return the path to the file.
+    """
+    espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"  # Path to eSpeak on your system
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_wav:
+        wav_path = temp_wav.name
+
+    try:
+        # Generate audio for the word using espeak
+        command = [espeak_path, '-w', wav_path, word]
+        result = subprocess.run(command, capture_output=True, text=True)
+        result.check_returncode()
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating audio for word '{word}': {e}")
+        os.remove(wav_path)
+        raise
+
+    return wav_path
+
+
 def generate_speech(text, output_path):
-    """
-    Generate audio file for the given text using espeak.
-    """
     try:
         espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
         command = [espeak_path, '-w', output_path, text]
-        subprocess.run(command, check=True)
+        result = subprocess.run(command, capture_output=True, text=True)
+        print("stdout:", result.stdout)
+        print("stderr:", result.stderr)
+        result.check_returncode()
     except subprocess.CalledProcessError as e:
         print(f"Error generating speech: {e}")
+        print("stdout:", e.stdout)
+        print("stderr:", e.stderr)
         raise
+
+
+def generate_speech_in_memory(text):
+    """
+    Generate speech audio for a given text using espeak-ng and return the audio data as bytes.
+    """
+    espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+    command = [espeak_path, '--stdout', text]
+
+    # Use subprocess to capture the output of espeak directly as audio data
+    result = subprocess.run(command, capture_output=True)
+
+    if result.returncode != 0:
+        raise Exception(f"Error generating speech: {result.stderr.decode()}")
+
+    # Return the generated audio data as bytes
+    return result.stdout
 
 
 def convert_audio(audio_file):
@@ -169,11 +209,13 @@ def extract_missed_words(story_text, missed_word_indices):
 def transcribe_and_compare(request):
     """
     Handle the POST request to transcribe audio, generate phonemes, and compare it with the stored story phonemes.
-    Returns the missed words in English and their corresponding audio to the frontend.
+    Returns the missed words in English and their corresponding audio files as Base64 encoded data.
     """
     if request.method == 'POST':
         try:
+            username = request.POST.get('email')
             user_audio = request.FILES.get('audio')
+            user = CustomUser.objects.get(email=username)
 
             # Check if the audio file is valid
             if not user_audio:
@@ -184,81 +226,125 @@ def transcribe_and_compare(request):
             if not story_title:
                 return JsonResponse({'error': 'Story title not provided'}, status=400)
 
-            try:
-                story = Story.objects.get(title=story_title)
-                story_phonemes = story.phoneme_content  # Use the pre-generated phonemes stored in the DB
-                story_text = story.content  # The actual story text content (in English)
-            except Story.DoesNotExist:
-                return JsonResponse({'error': 'Story not found'}, status=404)
-
             # Convert and transcribe the user audio
             wav_path = convert_audio(user_audio)
-            transcription = transcribe_audio(wav_path)
+            transcription = transcribe_audio(wav_path)  # Using wav2 to phonemes
             os.remove(wav_path)  # Clean up temporary file
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
-            # Perform phoneme comparison using Levenshtein distance and get mismatches
+            story_text, story_phonemes = get_final_text_and_phonemes()  # Getting the phonemes and words sent by the frontend
             results, missed_word_indices = align_with_levenshtein(transcription, story_phonemes)
-
-            # Convert the missed phoneme indices to actual English words from the story
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
             total_words = len(story_text.split())  # Total words in the story
             correct_words = total_words - len(missed_words)  # Correct words based on missed words
+            accuracy = calculate_accuracy(total_words, correct_words)
 
-            # Generate audio files for missed words and create URLs
-            audio_files = []
-            audio_urls = []
+            # Update UserProgress
+            progress, created = UserProgress.objects.get_or_create(
+                user=user,
+                defaults={
+                    'accuracy': accuracy,
+                    'total_words': total_words,
+                    'correct_words': correct_words
+                }
+            )
+            if not created:
+                progress.accuracy = accuracy
+                progress.total_words = total_words
+                progress.correct_words = correct_words
+                progress.missed_words = missed_words
+                progress.save()
+
+            # Generate audio for each missed word and convert to Base64
+            audio_files = {}
             for word in missed_words:
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
-                    audio_path = temp_audio.name
-                try:
-                    generate_speech(word, audio_path)
-                    audio_files.append(audio_path)
-                    audio_urls.append(f"{settings.MEDIA_URL}{os.path.basename(audio_path)}")  # Create URL
-                except Exception as e:
-                    print(f"Error generating audio file for '{word}': {e}")
+                wav_path = generate_audio_for_word(word)
+                with open(wav_path, 'rb') as f:
+                    audio_blob = f.read()  # Read the file as binary data
+                    audio_base64 = base64.b64encode(audio_blob).decode('utf-8')
+                    audio_files[word] = audio_base64
+                os.remove(wav_path)  # Clean up temporary file
 
-                    # Save the progress for the current user
-                    user_progress, created = UserProgress.objects.get_or_create(user=request.user)
-
-                    #
-                    # Update or create the detailed progress for this story/level
-                    detailed_progress, created = DetailedProgress.objects.get_or_create(
-                        user_progress=user_progress,
-                        level=9,
-                        defaults={
-                            'total_words': total_words,
-                            'correct_words': correct_words,
-                            'progress': (correct_words / total_words) * 100 if total_words > 0 else 0
-                        }
-                    )
-                    #
-                    if not created:
-                        # If DetailedProgress already exists, update it
-                        detailed_progress.total_words = total_words
-                        detailed_progress.correct_words = correct_words
-                        detailed_progress.progress = (correct_words / total_words) * 100 if total_words > 0 else 0
-                        detailed_progress.save()
-
-            # Prepare response with the transcription, results, missed words, and audio URLs
+            # Prepare the response data
             response_data = {
-                'transcription': transcription,
-                'story_phonemes': story_phonemes,
-                'results': results,
                 'missed_words': missed_words,
-                'audio_files': audio_urls  # Include URLs in response
+                'audio_files': audio_files,  # Base64 encoded audio data
+                'total_words': total_words,
+                'correct_words': correct_words,
             }
 
-            # Clean up temporary audio files
-            for file in audio_files:
-                os.remove(file)
-
-            return JsonResponse(response_data, status=200)
+            return JsonResponse(response_data)
 
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
+
+# Global variable to accumulate lines
+accumulated_lines = []
+final_text = ""
+final_phonemes = ""
+
+
+@csrf_exempt
+def convert_to_phonemes(request):
+    global accumulated_lines, final_text, final_phonemes
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            new_lines = data.get('lines', [])
+            is_final = data.get('is_final', False)  # A flag to check if it's the last part
+
+            # Append the new lines to the global accumulated lines list
+            accumulated_lines.extend(new_lines)
+
+            if is_final:
+                # When it's the final batch of lines, concatenate and generate phonemes
+                final_text = ' '.join(accumulated_lines)
+                final_phonemes = ''.join(generate_phonemes(final_text))
+
+                print("Final Text", final_text)
+                print("Final phonemes", final_phonemes)
+
+                # Clear the accumulated lines after generating phonemes
+                accumulated_lines = []
+                return JsonResponse({'phonemes': final_phonemes})
+            else:
+                return JsonResponse({'message': 'Lines received, waiting for final part.'})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+def generate_phonemes(text):
+    try:
+        espeak_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+        result = subprocess.run(
+            [espeak_path, '-q', '--ipa=1', '-ven-za', text],
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        phonemes = result.stdout.strip()
+        phonemes = phonemes.replace('_', ' ')
+        phonemes = phonemes.replace('\'', '')
+        return phonemes
+    except Exception as e:
+        print(f"Error generating phonemes with eSpeak: {e}")
+        return None
+
+
+# New function to retrieve the full text and phonemes
+def get_final_text_and_phonemes():
+    global final_text, final_phonemes
+
+    if final_text and final_phonemes:
+        # Return both the final concatenated text and phonemes
+        return final_text, final_phonemes
+    else:
+        return None, None

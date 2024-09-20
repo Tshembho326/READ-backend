@@ -3,7 +3,7 @@ from .models import UserProgress
 
 
 class UserProgressAdmin(admin.ModelAdmin):
-    list_display = ('user', 'total_level', 'accuracy')
+    list_display = ('user', 'accuracy')
     search_fields = ('email',)
     list_filter = ('user',)
 
