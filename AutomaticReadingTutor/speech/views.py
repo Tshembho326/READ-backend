@@ -229,11 +229,13 @@ def transcribe_and_compare(request):
             # Convert and transcribe the user audio
             wav_path = convert_audio(user_audio)
             transcription = transcribe_audio(wav_path)  # Using wav2 to phonemes
+            print("transcription", transcription)
             os.remove(wav_path)  # Clean up temporary file
             if transcription is None:
                 return JsonResponse({'error': 'Error processing audio file'}, status=500)
 
             story_text, story_phonemes = get_final_text_and_phonemes()  # Getting the phonemes and words sent by the frontend
+            print("story", story_phonemes)
             results, missed_word_indices = align_with_levenshtein(transcription, story_phonemes)
             missed_words = extract_missed_words(story_text, missed_word_indices)
 
@@ -301,20 +303,13 @@ def convert_to_phonemes(request):
 
             # Append the new lines to the global accumulated lines list
             accumulated_lines.extend(new_lines)
+            final_text = ' '.join(accumulated_lines)
+            final_phonemes = ''.join(generate_phonemes(final_text))
 
-            if is_final:
-                # When it's the final batch of lines, concatenate and generate phonemes
-                final_text = ' '.join(accumulated_lines)
-                final_phonemes = ''.join(generate_phonemes(final_text))
+            # Clear the accumulated lines after generating phonemes
+            accumulated_lines = []
 
-                print("Final Text", final_text)
-                print("Final phonemes", final_phonemes)
-
-                # Clear the accumulated lines after generating phonemes
-                accumulated_lines = []
-                return JsonResponse({'phonemes': final_phonemes})
-            else:
-                return JsonResponse({'message': 'Lines received, waiting for final part.'})
+            return JsonResponse({'message': 'Lines received, waiting for final part.'})
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
